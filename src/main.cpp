@@ -7,7 +7,7 @@ using namespace libyuv;
 int static saveFile(uint8_t * data , uint32_t size , char* filename){
     int ret = -1;
     char file_path[64];
-    sprintf(file_path, "%s/%s_%s.yuv", "/data/local/tmp/images", "image_yuv", filename);
+    sprintf(file_path, "%s/%s_%s.yuv", "/data/local/tmp/images", "image_yuv_test", filename);
 
     FILE *out_file = fopen(file_path, "wb");
     if (!out_file) {
@@ -35,17 +35,22 @@ int static saveFile(uint8_t * data , uint32_t size , char* filename){
  * @param w
  * @param h
  */
-int NV21Convert(uint8_t *in_nv21, uint8_t *out_nv21, uint32_t w, uint32_t h) {
+int NV21Convert(uint8_t *in_nv21, uint8_t *out_nv21, uint32_t *width, uint32_t *height) {
     int ret = -1;
     uint32_t ysize, usize, vsize;
     uint32_t ystride, ustride, vstride;
     uint32_t i420size;
+    uint32_t scale_w , scale_h; 
+    uint32_t w , h;
 
     uint8_t *i420data = nullptr;
     uint8_t *i420dataMirror = nullptr;
     uint8_t *i420dataOriate = nullptr;
     uint8_t *i420dataScale = nullptr;
-
+    uint8_t *nv21dataOut = nullptr;
+   
+    w = *width;
+    h = *height;
     ystride = w;
     ustride = w >> 1;
     vstride = w >> 1;
@@ -54,6 +59,7 @@ int NV21Convert(uint8_t *in_nv21, uint8_t *out_nv21, uint32_t w, uint32_t h) {
     usize = (h >> 1) * ustride;
     vsize = (h >> 1) * vstride;
 
+    scale_w = scale_h = (w > h) ? h : w ;
     i420size = ysize + usize + vsize;
 
     i420data = (uint8_t *)malloc(i420size);
@@ -99,34 +105,38 @@ int NV21Convert(uint8_t *in_nv21, uint8_t *out_nv21, uint32_t w, uint32_t h) {
         goto exit;
     }
 
-    i420dataScale = (uint8_t *)malloc(i420size);
-    printf("start I420Scale \n");
-    
+    printf("start I420Scale (%d , %d)\n", scale_w, scale_h);
+    i420dataScale = (uint8_t *)malloc(scale_w * scale_h * 3 / 2 );
     ret = I420Scale(i420dataOriate, h,
               i420dataOriate + ysize,  h >> 1,
               i420dataOriate + ysize + usize ,  h >> 1,
               h, w,
-              i420dataScale , ystride,
-              i420dataScale + ysize , ustride,
-              i420dataScale + ysize + usize , vstride,
-              w, h,
-              FilterMode::kFilterNone);
+              i420dataScale , scale_w,
+              i420dataScale + scale_w * scale_h , scale_w >> 1,
+              i420dataScale + scale_w * scale_h +  scale_w * scale_h / 4 , scale_w >> 1,
+              scale_w, scale_h,
+              FilterMode::kFilterBox);
     printf("end I420Scale ret: %d \n" , ret);
-    saveFile(i420dataScale, i420size, "scale");
+    saveFile(i420dataScale, scale_w * scale_h * 3 / 2, "scale");
     if (ret != 0){
         goto exit;
     }
 
-
-    printf("start I420ToNV21 \n");
-    ret = I420ToNV21(i420dataScale, ystride,
-                i420dataScale + ysize, ustride,
-                i420dataScale + ysize + usize, vstride,
-                out_nv21, ystride,
-                out_nv21 + ysize , ustride + vstride,
-                w, h);
+    nv21dataOut =  (uint8_t *)malloc(scale_w * scale_h * 3 / 2 );
+    memset(nv21dataOut, 0 , scale_w * scale_h * 3 / 2);
+    ret = I420ToNV21(i420dataScale, scale_w,
+                i420dataScale + scale_w * scale_h , scale_w >> 1,
+                i420dataScale + scale_w * scale_h +  scale_w * scale_h / 4 , scale_w >> 1,
+                nv21dataOut, scale_w,
+                nv21dataOut + scale_w * scale_h , (scale_w >> 1) + (scale_w >> 1),
+                scale_w, scale_h);
     printf("end I420ToNV21 ret: %d \n" , ret);
-   
+    saveFile(nv21dataOut, scale_w * scale_h * 3 / 2, "out-nv21");
+
+    memcpy(out_nv21, nv21dataOut, scale_w * scale_h * 3 / 2);
+    *width = scale_w;
+    *height = scale_h;
+
 exit:
 
     if (i420data != nullptr) {
@@ -149,20 +159,19 @@ exit:
         i420dataScale = nullptr;
     }
 
+    if ( nv21dataOut != nullptr){
+         free(nv21dataOut);
+         nv21dataOut = nullptr;
+    }
+
     return ret;
 }
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4)
-    {
-        printf("example\n   %s 640x480 yuvfile argbfile\n", argv[0]);
-        return -1;
-    }
-
     int ret;
 
-    int width, height;
+    uint32_t width, height;
     sscanf(argv[1], "%dx%d", &width, &height);
 
     char *yuv_file_path = argv[2];
@@ -204,17 +213,20 @@ int main(int argc, char *argv[])
     memcpy(nv21_in, y_buf, y_buf_size);
     memcpy(nv21_in + y_buf_size, vu_buf, vu_buf_size);
 
-    saveFile(nv21_in, nv21_size, "nv21origin-in");
+    saveFile(nv21_in, width * height * 3 /2, "nv21origin-in");
+    
+    printf("(width:%d height:%d) \n", width, height);
+    NV21Convert(nv21_in, nv21_out, &width, &height);
+    printf("(width:%d height:%d) \n", width, height);
 
-    NV21Convert(nv21_in, nv21_out,width, height);
-
-    saveFile(nv21_out, nv21_size, "nv21ortate-out");
+    saveFile(nv21_out,  width * height * 3 /2, "nv21ortate-out");
     
     int argb_size = width * height * 4;
     uint8_t argb_buf[argb_size];
-
+    
+   
     // ret = NV21ToARGB(y_buf, width, vu_buf, width, argb_buf, width * 4, width, height);
-    ret = NV21ToABGR(nv21_out, height, nv21_out + y_buf_size, height, argb_buf, height * 4,
+    ret = NV21ToABGR(nv21_out, width, nv21_out + width * height, (width>>1) + (width>>1), argb_buf, height * 4,
                      height, width);
     if (ret != 0)
     {
