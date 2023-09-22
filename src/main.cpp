@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "libyuv.h"
+#include <string.h>
 
 using namespace libyuv;
 
